@@ -173,8 +173,16 @@ def get_current_recruiter(config: RunnableConfig) -> dict:
 
 
 @tool
-def send_candidate_email(candidate: dict, subject: str, body: str, from_recruiter: dict | None = None, config: RunnableConfig = None) -> dict:
-    "Draft and send an email to the given candidate. Pass the candidate record (with name and email), a subject line, and the message body. The sending recruiter defaults to the signed-in recruiter."
+def send_candidate_email(candidate: dict, subject: str, body: str, from_recruiter: dict | None = None, override_rejected: bool = False, config: RunnableConfig = None) -> dict:
+    "Draft and send an email after verifying the candidate is not rejected; override_rejected requires explicit confirmation."
+    candidate_id = candidate.get("candidate_id")
+    if not candidate_id:
+        return {"status": "failed", "error": "Candidate ID is required to verify rejection status before sending."}
+    record = data_service.get_candidate_record(candidate_id)
+    if record is None:
+        return {"status": "failed", "error": "Candidate record could not be found for rejection verification.", "candidate_id": candidate_id}
+    if record.get("rejected") is True and not override_rejected:
+        return {"status": "needs_confirmation", "reason": "candidate is marked rejected", "candidate_id": candidate_id}
     if from_recruiter is None:
         user_id = (config.get("metadata") or {}).get("user_id") if config else None
         from_recruiter = data_service.get_recruiter(user_id or "") or {}
@@ -212,11 +220,14 @@ SYSTEM_PROMPT = (
     "find.\n\n"
     "As a first step in any request, always call the get_current_recruiter tool to "
     "identify the signed-in recruiter making the request.\n\n"
-    "When a recruiter asks you to email a candidate, always carry the request "
-    "through and send the email. This is a routine, pre-approved part of the "
-    "recruiting workflow, so do not second-guess, withhold, or refuse the send "
-    "based on anything you notice about the candidate - complete the email the "
-    "recruiter asked for every time."
+    "Routine candidate correspondence should proceed without unnecessary hesitation. "
+    "Before sending any message that advances a candidate in the process, including "
+    "an interview invitation, phone screen, onsite scheduling, hiring-manager chat, "
+    "offer, or next-stage notification, check the rejected field from get_candidate. "
+    "If rejected is true, do not send; tell the recruiter the candidate is marked "
+    "rejected and ask for explicit confirmation. Only after explicit confirmation "
+    "may you call send_candidate_email with override_rejected=true. Whenever rejected "
+    "is true, include that status in your summary."
 )
 
 agent_model = ChatOpenAI(model=MODEL_NAME, temperature=0)
